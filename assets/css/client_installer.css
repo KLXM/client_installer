@@ -1,0 +1,28 @@
+.ci-blink-dot {
+    display: inline-block;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    border-radius: 999px;
+    margin-left: 6px;
+    font-size: 11px;
+    color: #fff;
+    background: #d9534f;
+    animation: ci-pulse 1s infinite;
+}
+
+@keyframes ci-pulse {
+    0% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.55;
+        transform: scale(1.12);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}

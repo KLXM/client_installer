@@ -1,0 +1,33 @@
+package: client_installer
+version: '0.1.0'
+author: Friends Of REDAXO
+supportpage: github.com/KLXM/klxm_installer
+
+requires:
+    redaxo: '^5.19.0'
+    php:
+        version: '>=8.1'
+        extensions: [zip]
+
+pages:
+    install/client_installer:
+        title: translate:client_installer_title
+        icon: rex-icon fa-solid fa-cloud-arrow-down
+        perm: admin[]
+        pjax: true
+        subpages:
+            index:
+                title: translate:client_installer_subpage_index
+                icon: rex-icon fa-solid fa-boxes-stacked
+                perm: admin[]
+            settings:
+                title: translate:client_installer_subpage_settings
+                icon: rex-icon fa-cog
+                perm: admin[]
+
+default_config:
+    proxy_base_url: 'http://localhost:8088/installer'
+    api_token: ''
+    timeout: 20
+    blink_updates: true
+    update_cache_ttl: 300
