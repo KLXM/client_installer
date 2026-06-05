@@ -54,26 +54,34 @@ final class ProxyApi
             'ref' => $ref,
         ]);
 
-        $url = $this->buildBaseUrl() . '/index.php?route=api/v1/download&' . $query;
+        $lastError = 'Proxy-Download fehlgeschlagen.';
 
-        try {
-            $socket = rex_socket::factoryUrl($url);
-            $socket->setTimeout((int) $this->addon->getConfig('timeout', 20));
-            $this->addAuthHeader($socket);
-            $response = $socket->doGet();
+        foreach ($this->buildBaseUrls() as $baseUrl) {
+            $url = $baseUrl . '/index.php?route=api/v1/download&' . $query;
 
-            if (!$response->isOk()) {
-                throw new rex_functional_exception('Proxy-Download fehlgeschlagen (HTTP ' . $response->getStatusCode() . ').');
+            try {
+                $socket = rex_socket::factoryUrl($url);
+                $socket->setTimeout((int) $this->addon->getConfig('timeout', 20));
+                $this->addAuthHeader($socket);
+                $response = $socket->doGet();
+
+                if (!$response->isOk()) {
+                    $statusCode = $response->getStatusCode();
+                    $lastError = 'Proxy-Download fehlgeschlagen (HTTP ' . ($statusCode !== null ? (string) $statusCode : '?') . ').';
+                    continue;
+                }
+
+                $target = $this->addon->getCachePath('downloads/' . md5($owner . '/' . $repo . '/' . $ref) . '.zip');
+                rex_dir::create(dirname($target));
+                $response->writeBodyTo($target);
+
+                return $target;
+            } catch (rex_socket_exception $e) {
+                $lastError = 'Proxy nicht erreichbar: ' . $e->getMessage();
             }
-
-            $target = $this->addon->getCachePath('downloads/' . md5($owner . '/' . $repo . '/' . $ref) . '.zip');
-            rex_dir::create(dirname($target));
-            $response->writeBodyTo($target);
-
-            return $target;
-        } catch (rex_socket_exception $e) {
-            throw new rex_functional_exception('Proxy nicht erreichbar: ' . $e->getMessage());
         }
+
+        throw new rex_functional_exception($lastError);
     }
 
     /**
@@ -81,26 +89,35 @@ final class ProxyApi
      */
     private function requestJson(string $routeAndQuery): array
     {
-        $url = $this->buildBaseUrl() . '/index.php?route=' . $routeAndQuery;
+        $lastError = 'Proxy liefert kein gültiges JSON.';
 
-        try {
-            $socket = rex_socket::factoryUrl($url);
-            $socket->setTimeout((int) $this->addon->getConfig('timeout', 20));
-            $this->addAuthHeader($socket);
-            $response = $socket->doGet();
-            if (!$response->isOk()) {
-                throw new rex_functional_exception('Proxy-Antwort fehlerhaft (HTTP ' . $response->getStatusCode() . ').');
+        foreach ($this->buildBaseUrls() as $baseUrl) {
+            $url = $baseUrl . '/index.php?route=' . $routeAndQuery;
+
+            try {
+                $socket = rex_socket::factoryUrl($url);
+                $socket->setTimeout((int) $this->addon->getConfig('timeout', 20));
+                $this->addAuthHeader($socket);
+                $response = $socket->doGet();
+                if (!$response->isOk()) {
+                    $statusCode = $response->getStatusCode();
+                    $lastError = 'Proxy-Antwort fehlerhaft (HTTP ' . ($statusCode !== null ? (string) $statusCode : '?') . ').';
+                    continue;
+                }
+
+                $data = json_decode($response->getBody(), true);
+                if (!is_array($data)) {
+                    $lastError = 'Proxy liefert kein gültiges JSON.';
+                    continue;
+                }
+
+                return $data;
+            } catch (rex_socket_exception $e) {
+                $lastError = 'Proxy nicht erreichbar: ' . $e->getMessage();
             }
-
-            $data = json_decode($response->getBody(), true);
-            if (!is_array($data)) {
-                throw new rex_functional_exception('Proxy liefert kein gültiges JSON.');
-            }
-
-            return $data;
-        } catch (rex_socket_exception $e) {
-            throw new rex_functional_exception('Proxy nicht erreichbar: ' . $e->getMessage());
         }
+
+        throw new rex_functional_exception($lastError);
     }
 
     private function addAuthHeader(rex_socket $socket): void
@@ -111,13 +128,27 @@ final class ProxyApi
         }
     }
 
-    private function buildBaseUrl(): string
+    /**
+     * @return list<string>
+     */
+    private function buildBaseUrls(): array
     {
         $baseUrl = trim((string) $this->addon->getConfig('proxy_base_url', ''));
         if ($baseUrl === '') {
             throw new rex_functional_exception('Proxy-URL ist nicht konfiguriert.');
         }
 
-        return rtrim($baseUrl, '/');
+        $baseUrl = rtrim($baseUrl, '/');
+        $urls = [$baseUrl];
+
+        $path = (string) parse_url($baseUrl, PHP_URL_PATH);
+        if ($path !== '' && rtrim($path, '/') === '/installer') {
+            $fallback = preg_replace('@/installer$@', '', $baseUrl);
+            if (is_string($fallback) && $fallback !== '' && !in_array($fallback, $urls, true)) {
+                $urls[] = $fallback;
+            }
+        }
+
+        return $urls;
     }
 }
