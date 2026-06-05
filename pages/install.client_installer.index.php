@@ -5,6 +5,15 @@ declare(strict_types=1);
 use FriendsOfREDAXO\ClientInstaller\ClientInstaller;
 use FriendsOfREDAXO\ClientInstaller\ProxyApi;
 
+/**
+ * Entfernt unsichtbare/unerwartete Zeichen aus GitHub-Owner und Repo-Name.
+ */
+function ciSanitizeGitHubIdentifier(string $value): string
+{
+    $clean = preg_replace('/[^A-Za-z0-9._-]/', '', $value);
+    return is_string($clean) ? $clean : '';
+}
+
 $addon = rex_addon::get('client_installer');
 $service = new ClientInstaller($addon);
 $csrf = rex_csrf_token::factory('client_installer');
@@ -22,9 +31,28 @@ if (rex_request_method() === 'post') {
         }
 
         if ($action === 'install_addon') {
-            $owner = rex_post('owner', 'string', '');
-            $repo = rex_post('repo', 'string', '');
-            $ref = rex_post('ref', 'string', '');
+            $owner = ciSanitizeGitHubIdentifier(trim(rex_post('owner', 'string', '')));
+            $repo = ciSanitizeGitHubIdentifier(trim(rex_post('repo', 'string', '')));
+
+            if ($owner === '' || $repo === '') {
+                echo rex_view::error('Owner oder Repository ungültig.');
+                return;
+            }
+
+            $installApi = new ProxyApi($addon);
+
+            try {
+                $versions = $installApi->getVersions($owner, $repo);
+                $ref = (string) ($versions[0]['tag_name'] ?? $versions[0]['name'] ?? '');
+            } catch (Throwable $e) {
+                echo rex_view::error('Neueste Version konnte nicht ermittelt werden: ' . $e->getMessage());
+                return;
+            }
+
+            if ($ref === '') {
+                echo rex_view::error('Keine installierbare Release-Version gefunden.');
+                return;
+            }
 
             $result = $service->installFromProxy($owner, $repo, $ref);
             if ($result['success']) {
@@ -63,6 +91,11 @@ try {
 
 $packages = is_array($info['packages'] ?? null) ? $info['packages'] : [];
 $proxyApi = new ProxyApi($addon);
+$installButtonLabel = html_entity_decode(
+    $addon->i18n('client_installer_btn_install'),
+    ENT_QUOTES | ENT_HTML5,
+    'UTF-8',
+);
 
 $updatesByRepo = [];
 foreach (($info['updates'] ?? []) as $update) {
@@ -91,8 +124,8 @@ $content .= '<thead><tr>'
     . '</tr></thead><tbody>';
 
 foreach ($packages as $package) {
-    $owner = (string) ($package['owner_name'] ?? '');
-    $repo = (string) ($package['repo_name'] ?? '');
+    $owner = ciSanitizeGitHubIdentifier(trim((string) ($package['owner_name'] ?? '')));
+    $repo = ciSanitizeGitHubIdentifier(trim((string) ($package['repo_name'] ?? '')));
     if ($owner === '' || $repo === '') {
         continue;
     }
@@ -103,11 +136,16 @@ foreach ($packages as $package) {
     }
 
     $latest = '-';
+    $latestError = '';
+    $defaultRef = '';
     try {
         $versions = $proxyApi->getVersions($owner, $repo);
-        $latest = (string) ($versions[0]['tag_name'] ?? '-');
+        $latest = (string) ($versions[0]['tag_name'] ?? $versions[0]['name'] ?? '-');
+        $defaultRef = $latest !== '-' ? $latest : '';
     } catch (Throwable $e) {
-        $latest = '-';
+        $latest = 'kein Release';
+        $latestError = $e->getMessage();
+        $defaultRef = '';
     }
     $isUpdate = isset($updatesByRepo[$repo]);
 
@@ -115,15 +153,23 @@ foreach ($packages as $package) {
     $content .= '<td>' . rex_escape($repo) . ($isUpdate ? ' <span class="label label-warning">Update</span>' : '') . '</td>';
     $content .= '<td>' . rex_escape($owner) . '</td>';
     $content .= '<td>' . rex_escape($installedVersion) . '</td>';
-    $content .= '<td>' . rex_escape($latest) . '</td>';
+    $latestCell = rex_escape($latest);
+    if ($latestError !== '') {
+        $latestCell .= '<br><small class="text-danger">' . rex_escape($latestError) . '</small>';
+    }
+    $content .= '<td>' . $latestCell . '</td>';
     $content .= '<td>';
+    $installButton = '<button type="submit" class="btn btn-primary">' . rex_escape($installButtonLabel) . '</button>';
+    if ($defaultRef === '') {
+        $installButton = '<button type="submit" class="btn btn-default" disabled="disabled">Kein Release</button>';
+    }
+
     $content .= '<form method="post" class="form-inline" style="display:flex;gap:.4rem;align-items:center;">'
         . $csrf->getHiddenField()
         . '<input type="hidden" name="action" value="install_addon">'
         . '<input type="hidden" name="owner" value="' . rex_escape($owner) . '">'
         . '<input type="hidden" name="repo" value="' . rex_escape($repo) . '">'
-        . '<input type="text" class="form-control" name="ref" value="' . rex_escape($latest !== '-' ? $latest : 'main') . '" style="width:120px;">'
-        . '<button type="submit" class="btn btn-primary">' . rex_escape($addon->i18n('client_installer_btn_install')) . '</button>'
+        . $installButton
         . '</form>';
     $content .= '</td>';
     $content .= '</tr>';

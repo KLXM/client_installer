@@ -8,6 +8,7 @@ use rex_addon;
 use rex_dir;
 use rex_file;
 use rex_functional_exception;
+use rex_finder;
 use rex_install_archive;
 use rex_logger;
 use rex_package_manager;
@@ -43,8 +44,12 @@ final class ClientInstaller
         $updates = [];
 
         foreach ($packages as $package) {
-            $owner = (string) ($package['owner_name'] ?? '');
-            $repo = (string) ($package['repo_name'] ?? '');
+            $ownerRaw = trim((string) ($package['owner_name'] ?? ''));
+            $repoRaw = trim((string) ($package['repo_name'] ?? ''));
+            $owner = preg_replace('/[^A-Za-z0-9._-]/', '', $ownerRaw);
+            $repo = preg_replace('/[^A-Za-z0-9._-]/', '', $repoRaw);
+            $owner = is_string($owner) ? $owner : '';
+            $repo = is_string($repo) ? $repo : '';
             if ($owner === '' || $repo === '') {
                 continue;
             }
@@ -58,12 +63,17 @@ final class ClientInstaller
                 continue;
             }
 
-            $versions = $this->api->getVersions($owner, $repo);
+            try {
+                $versions = $this->api->getVersions($owner, $repo);
+            } catch (rex_functional_exception) {
+                continue;
+            }
+
             if ([] === $versions) {
                 continue;
             }
 
-            $latestTag = (string) ($versions[0]['tag_name'] ?? '');
+            $latestTag = (string) ($versions[0]['tag_name'] ?? $versions[0]['name'] ?? '');
             if ($latestTag === '') {
                 continue;
             }
@@ -103,8 +113,7 @@ final class ClientInstaller
             rex_dir::delete($extractPath);
             rex_dir::create($extractPath);
 
-            $zip = new rex_install_archive($archive);
-            if (!$zip->extract($extractPath)) {
+            if (!rex_install_archive::extract($archive, $extractPath)) {
                 return [
                     'success' => false,
                     'message' => 'Archiv konnte nicht entpackt werden.',
@@ -158,7 +167,7 @@ final class ClientInstaller
             rex_logger::logException($e);
             return [
                 'success' => false,
-                'message' => 'Unerwarteter Fehler bei der Installation.',
+                'message' => 'Unerwarteter Fehler bei der Installation (' . $e::class . '): ' . $e->getMessage(),
                 'addonKey' => null,
             ];
         }
@@ -166,10 +175,10 @@ final class ClientInstaller
 
     private function findPackageYml(string $extractPath): ?string
     {
-        $files = rex_dir::read($extractPath, null, true);
-        foreach ($files as $file) {
-            if (str_ends_with($file, '/package.yml')) {
-                return $extractPath . '/' . $file;
+        $iterator = rex_finder::factory($extractPath)->recursive()->filesOnly();
+        foreach ($iterator as $file) {
+            if ($file->getFilename() === 'package.yml') {
+                return $file->getPathname();
             }
         }
 
